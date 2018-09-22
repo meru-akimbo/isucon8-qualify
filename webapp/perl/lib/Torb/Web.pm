@@ -236,8 +236,6 @@ sub get_events {
     my ($self, $where) = @_;
     $where ||= sub { $_->{public_fg} };
 
-    my $txn = $self->dbh->txn_scope();
-
     my @event_ids = map { $_->{id} } grep $where->($_), @{ $self->dbh->select_all('SELECT * FROM events ORDER BY id ASC') };
     my $events = $self->_get_events(\@event_ids);
     my @results;
@@ -246,7 +244,6 @@ sub get_events {
         push @results => $event;
     }
 
-    $txn->commit();
 
     return @results;
 }
