@@ -6,6 +6,7 @@ requires 'Plack::Builder';
 requires 'Plack::Session';
 requires 'Starlet';
 requires 'Time::Moment';
+requires 'Gazelle';
 
 on configure => sub {
     requires 'ExtUtils::MakeMaker';
