@@ -568,7 +568,7 @@ get '/admin/api/reports/events/{id}/sales' => [qw/admin_login_required/] => sub 
 
     my @reports;
 
-    my $reservations = $self->dbh->select_all('SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num, s.price AS sheet_price, e.price AS event_price FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id WHERE r.event_id = ? ORDER BY reserved_at ASC FOR UPDATE', $event->{id});
+    my $reservations = $self->dbh->select_all('SELECT r.*, s.rank AS sheet_rank, s.num AS sheet_num, s.price AS sheet_price, e.price AS event_price FROM reservations r INNER JOIN sheets s ON s.id = r.sheet_id INNER JOIN events e ON e.id = r.event_id WHERE r.event_id = ?', $event->{id});
     for my $reservation (@$reservations) {
         my $report = {
             reservation_id => $reservation->{id},
@@ -576,12 +576,16 @@ get '/admin/api/reports/events/{id}/sales' => [qw/admin_login_required/] => sub 
             rank           => $reservation->{sheet_rank},
             num            => $reservation->{sheet_num},
             user_id        => $reservation->{user_id},
-            sold_at        => Time::Moment->from_string("$reservation->{reserved_at}Z", lenient => 1)->to_string(),
+            sold_at        => Time::Moment->from_string("$reservation->{reserved_at}Z", lenient => 1),
             canceled_at    => $reservation->{canceled_at} ? Time::Moment->from_string("$reservation->{canceled_at}Z", lenient => 1)->to_string() : '',
             price          => $reservation->{event_price} + $reservation->{sheet_price},
         };
 
         push @reports => $report;
+    }
+    @reports = sort { $a->{sold_at}->epoch <=> $b->{sold_at}->epoch } @reports;
+    for my $report (@reports) {
+        $report->{sold_at}->to_string;
     }
 
     return $self->render_report_csv($c, \@reports);
