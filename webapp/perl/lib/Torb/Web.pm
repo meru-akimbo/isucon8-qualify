@@ -344,7 +344,9 @@ post '/api/events/{id}/actions/reserve' => [qw/allow_json_request login_required
     my $sheet;
     my $reservation_id;
     while (1) {
-        $sheet = $self->dbh->select_row('SELECT * FROM sheets WHERE id NOT IN (SELECT sheet_id FROM reservations WHERE event_id = ? AND canceled_at IS NULL FOR UPDATE) AND `rank` = ? ORDER BY RAND() LIMIT 1', $event->{id}, $rank);
+        my $sheet_ids = $self->dbh->select_all('SELECT id FROM sheets WHERE id NOT IN (SELECT sheet_id FROM reservations WHERE event_id = ? AND canceled_at IS NULL FOR UPDATE) AND `rank` = ? ', $event->{id}, $rank);
+        $sheet = $self->dbh->select_row(qq{SELECT id, num  FROM sheets WHERE id = ?}, $sheet_ids->[int(rand(scalar @$sheet_ids))]);
+
         return $self->res_error($c, sold_out => 409) unless $sheet;
 
         my $txn = $self->dbh->txn_scope();
