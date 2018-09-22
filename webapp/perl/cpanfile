@@ -7,6 +7,9 @@ requires 'Plack::Session';
 requires 'Starlet';
 requires 'Time::Moment';
 requires 'Gazelle';
+requires 'DBIx::QueryLog';
+requires 'SQL::Maker';
+requires 'SQL::Maker::Plugin::InsertMulti';
 
 on configure => sub {
     requires 'ExtUtils::MakeMaker';

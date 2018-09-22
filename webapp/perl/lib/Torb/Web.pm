@@ -10,6 +10,9 @@ use DBIx::Sunny;
 use Plack::Session;
 use Time::Moment;
 use File::Spec;
+use SQL::Maker;
+
+SQL::Maker->load_plugin('InsertMulti');
 
 filter login_required => sub {
     my $app = shift;
@@ -141,10 +144,12 @@ get '/api/users/{id}' => [qw/login_required/] => sub {
                 AS sheet_rank, s.num
                 AS sheet_num
             FROM reservations r
+            INNER JOIN recent_event re
+                ON r.id = re.reservation_id
             INNER JOIN sheets s
                 ON s.id = r.sheet_id
             WHERE r.user_id = ?
-            ORDER BY r.change_at DESC LIMIT 5',
+            ORDER BY re.change_at DESC LIMIT 5',
         $user->{id});
 
         for my $row (@$rows) {
@@ -172,7 +177,9 @@ get '/api/users/{id}' => [qw/login_required/] => sub {
 
     my @recent_events;
     {
-        my $rows = $self->dbh->select_all('SELECT event_id FROM reservations WHERE user_id = ? GROUP BY event_id ORDER BY MAX(change_at) DESC LIMIT 5', $user->{id});
+        #my $rows = $self->dbh->select_all('SELECT event_id FROM reservations WHERE user_id = ? GROUP BY event_id ORDER BY MAX(change_at) DESC LIMIT 5', $user->{id});
+        my $rows = $self->dbh->select_all('SELECT r.event_id FROM recent_event re INNER JOIN reservations r ON re.reservation_id = r.id WHERE r.user_id = ? GROUP BY re.event_id ORDER BY re.change_at DESC LIMIT 5', $user->{id});
+
         for my $row (@$rows) {
             my $event = $self->get_event($row->{event_id});
             delete $event->{sheets}->{$_}->{detail} for keys %{ $event->{sheets} };
@@ -318,8 +325,11 @@ post '/api/events/{id}/actions/reserve' => [qw/allow_json_request login_required
         my $txn = $self->dbh->txn_scope();
         eval {
             my $time = Time::Moment->now_utc->strftime('%F %T%f');
-            $self->dbh->query('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at, change_at) VALUES (?, ?, ?, ?, ?)', $event->{id}, $sheet->{id}, $user->{id}, $time, $time);
+            $self->dbh->query('INSERT INTO reservations (event_id, sheet_id, user_id, reserved_at) VALUES (?, ?, ?, ?)', $event->{id}, $sheet->{id}, $user->{id}, $time);
             $reservation_id = $self->dbh->last_insert_id();
+
+            $self->dbh->query('INSERT INTO recent_event (change_at, reservation_id, event_id) VALUES (?, ?, ?)', $time, $reservation_id, $event->{id});
+
             $txn->commit();
         };
         if ($@) {
@@ -370,7 +380,9 @@ router ['DELETE'] => '/api/events/{id}/sheets/{rank}/{num}/reservation' => [qw/l
         }
 
         my $time = Time::Moment->now_utc->strftime('%F %T%f');
-        $self->dbh->query('UPDATE reservations SET canceled_at = ?, change_at = ? WHERE id = ?', $time, $time, $reservation->{id});
+        $self->dbh->query('UPDATE reservations SET canceled_at = ?  WHERE id = ?', $time, $reservation->{id});
+        $self->dbh->query('UPDATE recent_event SET change_at = ?,   event_id = ? WHERE reservation_id = ? ', $time, $reservation->{event_id},  $reservation->{id});
+
         $txn->commit();
     };
     if ($@) {
