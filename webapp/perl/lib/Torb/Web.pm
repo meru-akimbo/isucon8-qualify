@@ -238,70 +238,91 @@ sub get_events {
 
     my $txn = $self->dbh->txn_scope();
 
-    my @events;
     my @event_ids = map { $_->{id} } grep $where->($_), @{ $self->dbh->select_all('SELECT * FROM events ORDER BY id ASC') };
-    for my $event_id (@event_ids) {
-        my $event = $self->get_event($event_id);
-
+    my $events = $self->_get_events(\@event_ids);
+    my @results;
+    for my $event (@$events) {
         delete $event->{sheets}->{$_}->{detail} for keys %{ $event->{sheets} };
-        push @events => $event;
+        push @results => $event;
     }
 
     $txn->commit();
 
-    return @events;
+    return @results;
 }
 
 sub get_event {
     my ($self, $event_id, $login_user_id) = @_;
 
-    my $event = $self->dbh->select_row('SELECT * FROM events WHERE id = ?', $event_id);
-    return unless $event;
+    my $events = $self->_get_events([$event_id], $login_user_id);
+    return $events ? $events->[0] : ();
+}
 
-    # zero fill
-    $event->{total}   = 0;
-    $event->{remains} = 0;
-    for my $rank (qw/S A B C/) {
-        $event->{sheets}->{$rank}->{total}   = 0;
-        $event->{sheets}->{$rank}->{remains} = 0;
-    }
+sub _get_events {
+    my ($self, $event_ids, $login_user_id) = @_;
+
+    my $events = do {
+        my $rows = [@{$self->dbh->select_all('SELECT * FROM events WHERE id IN (?)', $event_ids)}];
+        my @results = grep { $_ } @$rows;
+        \@results;
+    };
+    return unless scalar @$events;
+
 
     my $sheets = $self->dbh->select_all('SELECT * FROM sheets ORDER BY `rank`, num');
     my @sheet_ids = map { $_->{id} } @$sheets;
 
-    my $reservations = $self->dbh->select_all('SELECT * FROM reservations WHERE event_id = ? AND sheet_id IN (?) AND canceled_at IS NULL GROUP BY event_id, sheet_id HAVING reserved_at = MIN(reserved_at)', $event->{id}, \@sheet_ids);
+    my $reservations = $self->dbh->select_all('SELECT * FROM reservations WHERE event_id IN (?) AND canceled_at IS NULL GROUP BY event_id, sheet_id HAVING reserved_at = MIN(reserved_at)', $event_ids);
 
-    for my $sheet (@$sheets) {
-        $event->{sheets}->{$sheet->{rank}}->{price} ||= $event->{price} + $sheet->{price};
-
-        $event->{total} += 1;
-        $event->{sheets}->{$sheet->{rank}}->{total} += 1;
-
-        my $reservation = do {
-            my @reservation = grep { $_->{sheet_id} } @$reservations;
-            $reservation[0];
-        };
-
-        if ($reservation) {
-            $sheet->{mine}        = JSON::XS::true if $login_user_id && $reservation->{user_id} == $login_user_id;
-            $sheet->{reserved}    = JSON::XS::true;
-            $sheet->{reserved_at} = Time::Moment->from_string($reservation->{reserved_at}.'Z', lenient => 1)->epoch;
-        } else {
-            $event->{remains} += 1;
-            $event->{sheets}->{$sheet->{rank}}->{remains} += 1;
-        }
-
-        push @{ $event->{sheets}->{$sheet->{rank}}->{detail} } => $sheet;
-
-        delete $sheet->{id};
-        delete $sheet->{price};
-        delete $sheet->{rank};
+    my $reservation_map = +{};
+    for my $reservation (@$reservations) {
+        $reservation_map->{$reservation->{event_id}}->{$reservation->{sheet_id}} = $reservation;
     }
 
-    $event->{public} = delete $event->{public_fg} ? JSON::XS::true : JSON::XS::false;
-    $event->{closed} = delete $event->{closed_fg} ? JSON::XS::true : JSON::XS::false;
+    my $results = [];
+    for my $event (@$events) {
+        # zero fill
+        $event->{total}   = 0;
+        $event->{remains} = 0;
+        for my $rank (qw/S A B C/) {
+            $event->{sheets}->{$rank}->{total}   = 0;
+            $event->{sheets}->{$rank}->{remains} = 0;
+        }
 
-    return $event;
+        for my $tmp_sheet (@$sheets) {
+            my $sheet = +{%{$tmp_sheet}};
+            $event->{sheets}->{$sheet->{rank}}->{price} ||= $event->{price} + $sheet->{price};
+
+            $event->{total} += 1;
+            $event->{sheets}->{$sheet->{rank}}->{total} += 1;
+
+            my $reservation = $reservation_map->{$event->{id}}{$sheet->{id}};
+
+            if ($reservation) {
+                $sheet->{mine}        = JSON::XS::true if $login_user_id && $reservation->{user_id} == $login_user_id;
+                $sheet->{reserved}    = JSON::XS::true;
+                $sheet->{reserved_at} = Time::Moment->from_string($reservation->{reserved_at}.'Z', lenient => 1)->epoch;
+            } else {
+                $event->{remains} += 1;
+                $event->{sheets}->{$sheet->{rank}}->{remains} += 1;
+            }
+
+            push @{ $event->{sheets}->{$sheet->{rank}}->{detail} } => $sheet;
+
+            delete $sheet->{id};
+            delete $sheet->{price};
+            delete $sheet->{rank};
+
+            $event->{id} += 0;
+        }
+
+        $event->{public} = delete $event->{public_fg} ? JSON::XS::true : JSON::XS::false;
+        $event->{closed} = delete $event->{closed_fg} ? JSON::XS::true : JSON::XS::false;
+
+        push @$results,  $event;
+    }
+
+    return $results;
 }
 
 sub sanitize_event {
