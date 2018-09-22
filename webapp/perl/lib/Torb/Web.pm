@@ -77,6 +77,7 @@ get '/initialize' => sub {
     my ($self, $c) = @_;
 
     system+File::Spec->catfile($self->root_dir, '../../db/init.sh');
+    $self->dbh->do(qq{UPDATE reservations SET change_at = IFNULL(canceled_at, reserved_at)});
 
     return $c->req->new_response(204, [], '');
 };
@@ -171,7 +172,7 @@ get '/api/users/{id}' => [qw/login_required/] => sub {
 
     my @recent_events;
     {
-        my $rows = $self->dbh->select_all('SELECT event_id FROM reservations WHERE user_id = ? GROUP BY event_id ORDER BY MAX(IFNULL(canceled_at, reserved_at)) DESC LIMIT 5', $user->{id});
+        my $rows = $self->dbh->select_all('SELECT event_id FROM reservations WHERE user_id = ? GROUP BY event_id ORDER BY MAX(change_at) DESC LIMIT 5', $user->{id});
         for my $row (@$rows) {
             my $event = $self->get_event($row->{event_id});
             delete $event->{sheets}->{$_}->{detail} for keys %{ $event->{sheets} };
