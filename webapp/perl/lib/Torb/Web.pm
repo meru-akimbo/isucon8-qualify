@@ -590,32 +590,30 @@ get '/admin/api/reports/events/{id}/sales' => [qw/admin_login_required/] => sub 
 get '/admin/api/reports/sales' => [qw/admin_login_required/] => sub {
     my ($self, $c) = @_;
 
-    my @reports;
+    my $sheets = $self->dbh->select_all(qq{SELECT * FROM sheets });
+    my %id2sheet = map { $_->{id} => $_ } @$sheets;
 
     my $reservations = $self->dbh->select_all('
-        SELECT r.*, s.rank
-            AS sheet_rank, s.num
-            AS sheet_num, s.price
-            AS sheet_price, e.id
-            AS event_id, e.price
-            AS event_price
+        SELECT r.*,
+            e.id    AS event_id,
+            e.price AS event_price
         FROM reservations r
-            INNER JOIN sheets s
-                ON s.id = r.sheet_id
         INNER JOIN events e
             ON e.id = r.event_id'
     );
 
+    my @reports;
     for my $reservation (@$reservations) {
+        my $sheet = $id2sheet{$reservation->{sheet_id}};
         my $report = {
             reservation_id => $reservation->{id},
             event_id       => $reservation->{event_id},
-            rank           => $reservation->{sheet_rank},
-            num            => $reservation->{sheet_num},
+            rank           => $sheet->{rank},
+            num            => $sheet->{num},
             user_id        => $reservation->{user_id},
             sold_at        => Time::Moment->from_string("$reservation->{reserved_at}Z", lenient => 1)->to_string(),
             canceled_at    => $reservation->{canceled_at} ? Time::Moment->from_string("$reservation->{canceled_at}Z", lenient => 1)->to_string() : '',
-            price          => $reservation->{event_price} + $reservation->{sheet_price},
+            price          => $reservation->{event_price} + $sheet->{price},
         };
 
         push @reports => $report;
