@@ -80,7 +80,6 @@ get '/initialize' => sub {
     my ($self, $c) = @_;
 
     system+File::Spec->catfile($self->root_dir, '../../db/init.sh');
-    $self->dbh->do(qq{UPDATE reservations SET change_at = IFNULL(canceled_at, reserved_at)});
 
     return $c->req->new_response(204, [], '');
 };
